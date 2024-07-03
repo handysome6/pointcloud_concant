@@ -76,11 +76,14 @@ def combine_frames(frames: List[MyPCD]):
     rt_dict[frames[0].folder_path.name] = np.eye(4)
 
     for i in range(1, len(frames)):
+        print(f"Processing frame {i}: {frames[i].folder_path.name}")
         # i-th frame to i-1-th frame transformation matrix
         source = frames[i]
         target = frames[i-1]
 
         rt = source.estimate_RT_aruco_icp(target)
+        # rt = source.estimate_RT_pnp(target, CM)
+        ic(rt)
         # rfine the transformation matrix
         rt_refined = colored_icp_registration(source.pcd, target.pcd, 0.001, rt)
 
@@ -97,7 +100,7 @@ def combine_frames(frames: List[MyPCD]):
 
 
 if __name__ == '__main__':
-    combine_folder = Path(r"C:\workspace\data\D3_image")
+    combine_folder = Path(r"C:\workspace\data\2.85m")
 
     # glob all the folders
     frame_folders = [f for f in combine_folder.iterdir() if f.is_dir()]

@@ -85,11 +85,10 @@ class MyPCD():
 
         d3_coord = bilinear_interpolation(x, y, x0, y0, x1, y1, q00, q01, q10, q11)
         if np.isnan(d3_coord).any():
-            print("Nan detected")
             return None
         return d3_coord
     
-    def estimat_RT_pnp(self, pcd2: Self, cm: np.ndarray):
+    def estimate_RT_pnp(self, pcd2: Self, cm: np.ndarray):
         image0 = self.image
         pc0 = self.pcd
         image1 = pcd2.image
@@ -114,8 +113,15 @@ class MyPCD():
         
         dist=np.mat([0,0,0,0,0])
         world_points = []
-        for x, y in frame0_points:
-            world_points.append(self.get_3dcoord_bilinear(x, y))
+        delete_ids = []
+        for id, (x, y) in enumerate(frame0_points):
+            f0_world = self.get_3dcoord_bilinear(x, y)
+            if f0_world is not None:
+                world_points.append(f0_world)
+            else:
+                delete_ids.append(id)
+        frame0_points = np.delete(frame0_points, delete_ids, axis=0)
+        frame1_points = np.delete(frame1_points, delete_ids, axis=0)
 
         world_points = np.array(world_points)
 
