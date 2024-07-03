@@ -1,0 +1,5 @@
+open3d
+numpy
+icecream
+opencv-python-headless
+matplotlib
