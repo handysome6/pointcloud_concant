@@ -41,6 +41,7 @@ def detectAndDescribe(image, method=None):
     elif method == 'akaze':
         descriptor = cv2.AKAZE_create()
     image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    image_gray = cv2.equalizeHist(image_gray)
     (kps, features) = descriptor.detectAndCompute(image_gray, None)
     return kps, features
 

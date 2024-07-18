@@ -81,15 +81,15 @@ def combine_frames(frames: List[MyPCD]):
         source = frames[i]
         target = frames[i-1]
 
-        rt = source.estimate_RT_aruco_icp(target)
+        rt = source.estimate_RT_svd_CCT(target)
+        # rt = source.estimate_RT_aruco_icp(target)
         # rt = source.estimate_RT_pnp(target, CM)
         ic(rt)
-        # rfine the transformation matrix
-        rt_refined = colored_icp_registration(source.pcd, target.pcd, 0.001, rt)
-
+        
         # i-th frame to 0-th frame transformation matrix
-        rt_dict[frames[i].folder_path.name] = rt_refined @ rt_dict[frames[i-1].folder_path.name]
+        rt_dict[frames[i].folder_path.name] = rt_dict[frames[i-1].folder_path.name] @ rt
 
+        print()
 
     # Concatenate the point clouds
     pcd_combined = o3d.geometry.PointCloud()
@@ -100,10 +100,13 @@ def combine_frames(frames: List[MyPCD]):
 
 
 if __name__ == '__main__':
-    combine_folder = Path(r"C:\workspace\data\2.85m")
+    combine_folder = Path(r"C:\workspace\data\2.85m\2.85m_5")
+    img_folder = combine_folder / "img"
+    data_folder = combine_folder / "data"
 
     # glob all the folders
-    frame_folders = [f for f in combine_folder.iterdir() if f.is_dir()]
+    frame_folders = [f for f in img_folder.iterdir() if f.is_dir()]
+    frame_folders.sort(reverse=False)
     ic(frame_folders)
     frames = [MyPCD(f) for f in frame_folders]
 
@@ -111,7 +114,9 @@ if __name__ == '__main__':
     o3d.io.write_point_cloud(str(combine_folder / "combined_pointcloud.ply"), pcd_combined)
     ic(rt_list)
 
-    import pickle
     # save the rt_list to the folder
-    with open(combine_folder / "rt_list.pkl", "wb") as f:
+    if data_folder.exists() is False:
+        data_folder.mkdir()
+    import pickle
+    with open(data_folder / "a_rt_list.pkl", "wb") as f:
         pickle.dump(rt_list, f)

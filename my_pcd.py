@@ -5,6 +5,7 @@ import cv2
 from pathlib import Path
 from icecream import ic
 from typing_extensions import Self
+from auto_match.aruco import ArucoDetector
 
 from utils import bilinear_interpolation, timeit
 from pose_estimation.feature_extract import detectAndDescribe, my_match
@@ -44,12 +45,12 @@ def colored_icp_registration(source, target, voxel_size, current_transformation)
         target_down = target.voxel_down_sample(radius)
         source_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius*2, max_nn=20))
         target_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius*2, max_nn=20))
-        result = o3d.pipelines.registration.registration_colored_icp(
+        result = o3d.pipelines.registration.registration_icp(
             source_down, 
             target_down, 
             radius, 
             current_transformation,
-            o3d.pipelines.registration.TransformationEstimationForColoredICP(),
+            o3d.pipelines.registration.TransformationEstimationPointToPlane(),
             o3d.pipelines.registration.ICPConvergenceCriteria(relative_fitness=1e-6,
                                                               relative_rmse=1e-6,
                                                               max_iteration=max_it))
@@ -97,7 +98,7 @@ class MyPCD():
 
         kps0, features0 = detectAndDescribe(image0, method='sift')
         kps1, features1 = detectAndDescribe(image1, method='sift')
-        matches01 = my_match(kps0, kps1, features0, features1, ratio=0.5)
+        matches01 = my_match(kps0, kps1, features0, features1, ratio=0.7)
 
         frame0_points = []
         frame1_points = []
@@ -125,7 +126,12 @@ class MyPCD():
 
         world_points = np.array(world_points)
 
-        success, rvec, tvec, inliers = cv2.solvePnPRansac(world_points, frame1_points, cm, np.array([0.0,0.0,0.0,0.0,0.0]))
+        # DISTORTION:
+        # K1:-0.0564663522    K2:0.1112944335    K3:-0.0645765141    
+        # P1:-0.0001750350    P2:0.0002957206    
+        dist = np.array([-0.0564663522, 0.1112944335, -0.0001750350, 0.0002957206, -0.0645765141])
+
+        success, rvec, tvec, inliers = cv2.solvePnPRansac(world_points, frame1_points, cm, dist)
         # Use right image to refine
         if success and inliers is not None:
             rvec, tvec = cv2.solvePnPRefineLM(world_points[np.squeeze(inliers)], frame1_points[np.squeeze(inliers)], cm, dist, rvec, tvec)
@@ -136,15 +142,6 @@ class MyPCD():
         T_mat_opencv[:3, 3:] = tvec
         # print("T_mat_opencv: \n", T_mat_opencv)
         return T_mat_opencv
-
-    def remove_plane(self):
-        pcd = self.pcd
-        plane_model, inliers = pcd.segment_plane(distance_threshold=0.01,
-                                                ransac_n=3,
-                                                num_iterations=1000)
-
-        outlier_cloud = pcd.select_by_index(inliers, invert=True)
-        return outlier_cloud
 
     def refine_RT_icp(self, pcd2: Self, T_mat_opencv):
         # source = self.remove_plane()
@@ -254,3 +251,123 @@ class MyPCD():
         # transmat10[:3, :3] = rotMat
         # transmat10[:3, 3] = T_mat
 
+    def get_aruco_coords(self):
+        ad = ArucoDetector(self.image)
+        points_2d, ids = ad.get_corners_centers_ids()
+        points_2d = points_2d[:,-1,:]
+
+        world_points = []
+        save_indexes = np.ones_like(ids, dtype=bool)
+
+        for i in range(len(points_2d)):
+            p_3d = self.get_3dcoord_bilinear(points_2d[i,0], points_2d[i,1])
+            if p_3d is not None:
+                world_points.append(p_3d)
+            else:
+                save_indexes[i] = False
+
+        ids = ids[save_indexes]
+        points_2d = points_2d[save_indexes]
+        world_points = np.array(world_points)
+        self.points_2d = points_2d
+
+        return world_points, ids
+
+    # use CCT decoder 
+    def estimate_RT_svd_CCT(self, pcd2: Self):
+        from CCTDecoder.cct_decode import CCT_extract
+        frame0 = self
+        frame1 = pcd2
+        img0 = frame0.image
+        img1 = frame1.image
+
+        # extract CCT id and coords
+        N = 8
+        cct0, _ = CCT_extract(img0, 8)
+        cct1, _ = CCT_extract(img1, 8)
+
+        # get common cct ids
+        common_ids = set(cct0.keys()).intersection(set(cct1.keys()))
+        # ic(len(common_ids), common_ids)
+        
+        if __name__ == "__main__":
+            # show matches in image
+            concant_img = np.concatenate((img0, img1), axis=0)
+            # draw matches on the concant image, using line and circle
+            for id in common_ids:
+                x0, y0 = cct0[id]
+                x1, y1 = cct1[id]
+                cv2.circle(concant_img, np.int16([x0, y0]), 5, (0, 0, 255), -1)
+                cv2.circle(concant_img, np.int16([x1, y1+frame0.h]), 5, (0, 0, 255), -1)
+                cv2.line(concant_img, np.int16([x0, y0]), np.int16([x1, y1+frame0.h]), (0, 255, 0), 1)
+                # cv2.line(concant_img, np.int16([x0, y0]), np.int16([x1+frame0.w, y1]), (0, 255, 0), 1)
+            # show using pil
+            from PIL import Image
+            Image.fromarray(concant_img).show()
+
+        # get 3d points from cct ids
+        world_points0 = []
+        world_points1 = []
+        for id in common_ids:
+            d3_coord0 = frame0.get_3dcoord_bilinear(*cct0[id])
+            d3_coord1 = frame1.get_3dcoord_bilinear(*cct1[id])
+            if d3_coord0 is not None and d3_coord1 is not None:
+                world_points0.append(d3_coord0)
+                world_points1.append(d3_coord1)
+            else:
+                if d3_coord0 is None:
+                    print(f"Failed to get 3d coord for id {id} in {frame0.folder_path}")
+                if d3_coord1 is None:
+                    print(f"Failed to get 3d coord for id {id} in {frame1.folder_path}")
+                                 
+        # normalize 3d points
+        u0 = np.mean(np.array(world_points0), axis=0)
+        u1 = np.mean(np.array(world_points1), axis=0)
+        world_points0 = world_points0 - u0
+        world_points1 = world_points1 - u1
+
+        # scipy optimize
+        from scipy.optimize import minimize
+        from scipy.spatial.transform import Rotation as R
+        def loss(x):
+            rot = R.from_euler('xyz', x[:3]).as_matrix()
+            T = x[3:]
+            error = 0
+            for i, j in zip(world_points0, world_points1):
+                error += np.linalg.norm(rot @ i + T - j)
+            return error
+
+        # initial guesses
+        # r =  R.from_matrix(rotMat)
+        # rot_eular = r.as_euler("xyz",degrees=False)
+        # x0 = np.concatenate((rot_eular, T_mat))
+        x0 = np.zeros(6)
+        # x0 = np.random.rand(6)
+        # x0 = np.array([1, 1, 1, 0, 0, 0])
+        res = minimize(loss, x0, method='Nelder-Mead')
+        # print(res)
+        # print final error
+        print("Final error: ", loss(res.x))
+        rot = R.from_euler('xyz', res.x[:3]).as_matrix()
+        T = res.x[3:] + u1 - rot @ u0
+        transmat01 = np.eye(4)
+        transmat01[:3, :3] = rot
+        transmat01[:3, 3] = T
+        return transmat01
+
+if __name__ == "__main__":
+    pcd1 = MyPCD(r"C:\workspace\data\2.85m\2.85m_5\img\4")
+    pcd0 = MyPCD(r"C:\workspace\data\2.85m\2.85m_5\img\5")
+
+    rt = pcd0.estimate_RT_svd_CCT(pcd1)
+
+    print(rt)
+
+    # visual
+    draw_registration_result(pcd0.pcd, pcd1.pcd, rt)
+
+    # Concatenate the point clouds
+    pcd_combined = o3d.geometry.PointCloud()
+    pcd_combined += pcd0.pcd.transform(rt)
+    pcd_combined += pcd1.pcd
+    o3d.io.write_point_cloud("combined_pointcloud.ply", pcd_combined)
