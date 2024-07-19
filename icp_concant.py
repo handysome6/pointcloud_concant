@@ -5,6 +5,7 @@ from my_pcd import MyPCD, colored_icp_registration
 from typing import List
 from pathlib import Path
 from utils import timeit
+import os
 
 CM = np.array([[1746.8647460938, 0.0000000000, 1018.6414794922],
                 [0.0000000000, 1745.8187255859, 793.8147583008],
@@ -100,23 +101,31 @@ def combine_frames(frames: List[MyPCD]):
 
 
 if __name__ == '__main__':
-    combine_folder = Path(r"C:\workspace\data\2.85m\2.85m_5")
-    img_folder = combine_folder / "img"
-    data_folder = combine_folder / "data"
+    samples_folder = r"E:\ruben_test\ruben\0712\3m"
+    for folder_name in os.listdir(samples_folder):
+        folder_path = os.path.join(samples_folder, folder_name)
+        # folder_path = Path(samples_folder) / folder_name
+        if not os.path.isdir(folder_path):
+            continue
+        
+        combine_folder = Path(folder_path) / "img"
+        # combine_folder = folder_path
+        pkl_folder = Path(folder_path) / "data"
+        # pkl_folder = folder_path
 
-    # glob all the folders
-    frame_folders = [f for f in img_folder.iterdir() if f.is_dir()]
-    frame_folders.sort(reverse=False)
-    ic(frame_folders)
-    frames = [MyPCD(f) for f in frame_folders]
+    # combine_folder = Path(r"E:\ruben_test\ruben\0703\2.85m\2.85_5\img")
+    # pkl_folder = Path(r"E:\ruben_test\ruben\0703\2.85m\2.85_5\data")
 
-    pcd_combined, rt_list = combine_frames(frames)
-    o3d.io.write_point_cloud(str(combine_folder / "combined_pointcloud.ply"), pcd_combined)
-    ic(rt_list)
+        # glob all the folders
+        frame_folders = [f for f in combine_folder.iterdir() if f.is_dir()]
+        ic(frame_folders)
+        frames = [MyPCD(f) for f in frame_folders]
 
-    # save the rt_list to the folder
-    if data_folder.exists() is False:
-        data_folder.mkdir()
-    import pickle
-    with open(data_folder / "a_rt_list.pkl", "wb") as f:
-        pickle.dump(rt_list, f)
+        pcd_combined, rt_list = combine_frames(frames)
+        o3d.io.write_point_cloud(str(pkl_folder / "combined_pointcloud.ply"), pcd_combined)
+        ic(rt_list)
+
+        import pickle
+        # save the rt_list to the folder
+        with open(pkl_folder / "rt_list.pkl", "wb") as f:
+            pickle.dump(rt_list, f)
