@@ -82,7 +82,8 @@ def combine_frames(frames: List[MyPCD]):
         source = frames[i]
         target = frames[i-1]
 
-        rt = source.estimate_RT_svd_CCT(target)
+        rt = source.estimate_RT_CCT_optimize(target)
+        # rt = source.estimate_RT_aruco_optimize(target)
         # rt = source.estimate_RT_aruco_icp(target)
         # rt = source.estimate_RT_pnp(target, CM)
         ic(rt)

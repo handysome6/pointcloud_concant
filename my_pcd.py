@@ -251,7 +251,75 @@ class MyPCD():
         # transmat10[:3, :3] = rotMat
         # transmat10[:3, 3] = T_mat
 
+    def estimate_RT_aruco_optimize(self, pcd2: Self):
+        """
+        Estimate the transformation matrix between two frames using aruco markers
+        R, T optimization using scipy minimize
+        """
+        frame0, frame1 = self, pcd2
+        image0, image1 = frame0.image, frame1.image
+
+        ad0 = ArucoDetector(image0)
+        ad1 = ArucoDetector(image1)
+        corners0, ids0 = ad0.get_corners_centers_ids()
+        corners1, ids1 = ad1.get_corners_centers_ids()
+
+        dict0 = dict(zip(np.squeeze(ids0), corners0))
+        dict1 = dict(zip(np.squeeze(ids1), corners1))
+
+        # get intersection of ids to get common aruco corners
+        common_ids = set(ids0.flatten()).intersection(set(ids1.flatten()))
+        common_corners0 = np.array([dict0[id] for id in common_ids]).reshape(-1, 2)
+        common_corners1 = np.array([dict1[id] for id in common_ids]).reshape(-1, 2)
+
+        # get 3d points from aruco corners
+        world_points0 = []
+        world_points1 = []
+        for corner0, corner1 in zip(common_corners0, common_corners1):
+            x0, y0 = corner0.flatten()
+            x1, y1 = corner1.flatten()
+            d3_coord0 = frame0.get_3dcoord_bilinear(x0, y0)
+            d3_coord1 = frame1.get_3dcoord_bilinear(x1, y1)
+            if d3_coord0 is not None and d3_coord1 is not None:
+                world_points0.append(d3_coord0)
+                world_points1.append(d3_coord1)
+
+        # normalize 3d points
+        u0 = np.mean(np.array(world_points0), axis=0)
+        u1 = np.mean(np.array(world_points1), axis=0)
+        world_points0 = world_points0 - u0
+        world_points1 = world_points1 - u1
+
+        # scipy optimize
+        from scipy.optimize import minimize
+        from scipy.spatial.transform import Rotation as R
+        def loss(x):
+            rot = R.from_euler('xyz', x[:3]).as_matrix()
+            T = x[3:]
+            error = 0
+            for i, j in zip(world_points0, world_points1):
+                error += np.linalg.norm(rot @ i + T - j)
+            return error
+
+        # initial guesses
+        x0 = np.zeros(6)
+        # x0 = np.random.rand(6)
+        # x0 = np.array([1, 1, 1, 0, 0, 0])
+        res = minimize(loss, x0, method='Nelder-Mead')
+        # print(res)
+        # print final error
+        print("Final error: ", loss(res.x))
+        rot = R.from_euler('xyz', res.x[:3]).as_matrix()
+        T = res.x[3:] + u1 - rot @ u0
+        transmat01 = np.eye(4)
+        transmat01[:3, :3] = rot
+        transmat01[:3, 3] = T
+        return transmat01
+
     def get_aruco_coords(self):
+        """
+        Get the 3d coord of every aruco markers' center in the frame
+        """
         ad = ArucoDetector(self.image)
         points_2d, ids = ad.get_corners_centers_ids()
         points_2d = points_2d[:,-1,:]
@@ -274,7 +342,11 @@ class MyPCD():
         return world_points, ids
 
     # use CCT decoder 
-    def estimate_RT_svd_CCT(self, pcd2: Self):
+    def estimate_RT_CCT_optimize(self, pcd2: Self):
+        """
+        Estimate the transformation matrix between two frames using CCT markers
+        R, T optimization using scipy minimize
+        """
         from CCTDecoder.cct_decode import CCT_extract
         frame0 = self
         frame1 = pcd2
@@ -359,7 +431,7 @@ if __name__ == "__main__":
     pcd1 = MyPCD(r"C:\workspace\data\2.85m\2.85m_5\img\4")
     pcd0 = MyPCD(r"C:\workspace\data\2.85m\2.85m_5\img\5")
 
-    rt = pcd0.estimate_RT_svd_CCT(pcd1)
+    rt = pcd0.estimate_RT_aruco_optimize(pcd1)
 
     print(rt)
 
